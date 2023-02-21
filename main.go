@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"machine"
+	"machine/usb/midi"
 	"time"
 )
 
@@ -34,24 +35,6 @@ func (mux *Cd74hc4067) GetSignal(pin int) (bool, error) {
 	return value, nil
 }
 
-func (mux *Cd74hc4067) HandlePinsSignal() (int, bool, error) {
-
-	for index := range pins {
-
-		value, error := mux.GetSignal(index)
-
-		if error != nil {
-			return -1, false, error
-		}
-
-		if value {
-			return index, value, nil
-		}
-	}
-
-	return -1, false, nil
-}
-
 var pins = [][]uint8{
 	{0, 0, 0, 0},
 	{0, 0, 0, 1},
@@ -69,6 +52,25 @@ var pins = [][]uint8{
 	{1, 1, 0, 1},
 	{1, 1, 1, 0},
 	{1, 1, 1, 1},
+}
+
+var notes = []midi.Note{
+	midi.C3,
+	midi.D3,
+	midi.E3,
+	midi.F3,
+	midi.G3,
+	midi.A3,
+	midi.B3,
+	midi.C4,
+	midi.D4,
+	midi.E4,
+	midi.F4,
+	midi.G4,
+	midi.A4,
+	midi.B4,
+	midi.C5,
+	midi.D5,
 }
 
 func main() {
@@ -89,15 +91,26 @@ func main() {
 		S4:      machine.D7,
 	}
 
+	m := midi.New()
+
 	for {
-		pin, value, error := mux.HandlePinsSignal()
 
-		if error != nil {
-			println("Deu bosta")
-		}
+		for index := range pins {
 
-		if value {
-			println(value, pin)
+			value, error := mux.GetSignal(index)
+
+			if error != nil {
+				println("Deu bosta")
+			}
+
+			if value {
+				m.NoteOn(0, 0, notes[index], 0x40)
+				println(value, index, notes[index])
+				continue
+			} else {
+				m.NoteOff(0, 0, notes[index], 0x40)
+			}
+
 		}
 	}
 
