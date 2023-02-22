@@ -76,8 +76,7 @@ var notes = []midi.Note{
 
 var Midi = midi.New()
 
-func main() {
-
+func setup() {
 	machine.D6.Configure(machine.PinConfig{Mode: machine.PinInputPulldown})
 
 	machine.D10.Configure(machine.PinConfig{Mode: machine.PinOutput})
@@ -88,6 +87,12 @@ func main() {
 	machine.NEOPIXEL.Configure(machine.PinConfig{Mode: machine.PinOutput})
 	machine.NEOPIXEL_POWER.Configure(machine.PinConfig{Mode: machine.PinOutput})
 	machine.NEOPIXEL_POWER.High()
+
+}
+
+func main() {
+
+	go setup()
 
 	ws := ws2812.New(machine.NEOPIXEL)
 	color := []color.RGBA{{R: 0, G: 255, B: 255, A: 1}}
@@ -105,7 +110,7 @@ func main() {
 
 	for {
 
-		ws.WriteColors(color)
+		go ws.WriteColors(color)
 
 		for index := range pins {
 
@@ -122,9 +127,9 @@ func main() {
 			active[pin] = value
 
 			if active[pin] {
-				Midi.NoteOn(0, 0, notes[pin], 0x40)
+				Midi.NoteOn(0, 0, notes[pin], 255)
 			} else {
-				Midi.NoteOff(0, 0, notes[pin], 0x40)
+				Midi.NoteOff(0, 0, notes[pin], 255)
 			}
 		}
 	}
