@@ -1,8 +1,6 @@
 package main
 
 import (
-	"errors"
-	"fmt"
 	"image/color"
 	"machine"
 	"machine/usb/midi"
@@ -11,29 +9,37 @@ import (
 	"tinygo.org/x/drivers/ws2812"
 )
 
-type Cd74hc4067 struct {
-	Signal  machine.Pin
-	Enabled machine.Pin
-	S1      machine.Pin
-	S2      machine.Pin
-	S3      machine.Pin
-	S4      machine.Pin
+type ActiveChannel struct {
+	Value bool
+	Pin   int
 }
 
-func (mux *Cd74hc4067) GetSignal(pin int) (int, bool, error) {
+type Cd74hc4067 struct {
+	Signal         machine.Pin
+	Enabled        machine.Pin
+	S1             machine.Pin
+	S2             machine.Pin
+	S3             machine.Pin
+	S4             machine.Pin
+	ActiveChannels chan ActiveChannel
+}
 
-	if pin > 15 {
-		return -2, false, errors.New(fmt.Sprintf("Invalid pin %d", pin))
+func (mux *Cd74hc4067) Select() {
+	for {
+		for pin := range pins {
+			mux.S1.Set(pins[pin][0] == 1)
+			mux.S2.Set(pins[pin][1] == 1)
+			mux.S3.Set(pins[pin][2] == 1)
+			mux.S4.Set(pins[pin][3] == 1)
+
+			time.Sleep(12 * time.Microsecond)
+
+			mux.ActiveChannels <- ActiveChannel{
+				Pin:   pin,
+				Value: mux.Signal.Get(),
+			}
+		}
 	}
-
-	mux.S1.Set(pins[pin][0] == 1)
-	mux.S2.Set(pins[pin][1] == 1)
-	mux.S3.Set(pins[pin][2] == 1)
-	mux.S4.Set(pins[pin][3] == 1)
-
-	time.Sleep(10 * time.Microsecond)
-
-	return pin, mux.Signal.Get(), nil
 }
 
 var pins = [][]uint8{
@@ -76,7 +82,18 @@ var notes = []midi.Note{
 
 var Midi = midi.New()
 
+var notesActive = make(map[int]bool)
+
 func setup() {
+
+	machine.D0.Configure(machine.PinConfig{Mode: machine.PinInputPulldown})
+	machine.D1.Configure(machine.PinConfig{Mode: machine.PinInputPulldown})
+	machine.D2.Configure(machine.PinConfig{Mode: machine.PinInputPulldown})
+
+	machine.D3.Configure(machine.PinConfig{Mode: machine.PinInputPulldown})
+	machine.D4.Configure(machine.PinConfig{Mode: machine.PinInputPulldown})
+	machine.D5.Configure(machine.PinConfig{Mode: machine.PinInputPulldown})
+
 	machine.D6.Configure(machine.PinConfig{Mode: machine.PinInputPulldown})
 
 	machine.D10.Configure(machine.PinConfig{Mode: machine.PinOutput})
@@ -87,50 +104,40 @@ func setup() {
 	machine.NEOPIXEL.Configure(machine.PinConfig{Mode: machine.PinOutput})
 	machine.NEOPIXEL_POWER.Configure(machine.PinConfig{Mode: machine.PinOutput})
 	machine.NEOPIXEL_POWER.High()
-
 }
 
 func main() {
 
-	go setup()
-
-	ws := ws2812.New(machine.NEOPIXEL)
-	color := []color.RGBA{{R: 0, G: 255, B: 255, A: 1}}
+	setup()
 
 	mux := &Cd74hc4067{
-		Signal:  machine.D6,
-		Enabled: 0,
-		S1:      machine.D10,
-		S2:      machine.D9,
-		S3:      machine.D8,
-		S4:      machine.D7,
+		Signal:         machine.D6,
+		Enabled:        0,
+		S1:             machine.D10,
+		S2:             machine.D9,
+		S3:             machine.D8,
+		S4:             machine.D7,
+		ActiveChannels: make(chan ActiveChannel, 16),
 	}
 
-	active := make([]bool, 16)
+	ws := ws2812.New(machine.NEOPIXEL)
 
-	for {
+	go mux.Select()
 
-		go ws.WriteColors(color)
+	for pin := range mux.ActiveChannels {
 
-		for index := range pins {
+		if notesActive[pin.Pin] == pin.Value {
+			continue
+		}
 
-			pin, value, error := mux.GetSignal(index)
+		notesActive[pin.Pin] = pin.Value
 
-			if error != nil {
-				println("Deu bosta")
-			}
-
-			if value == active[pin] {
-				continue
-			}
-
-			active[pin] = value
-
-			if active[pin] {
-				Midi.NoteOn(0, 0, notes[pin], 255)
-			} else {
-				Midi.NoteOff(0, 0, notes[pin], 255)
-			}
+		if notesActive[pin.Pin] {
+			Midi.NoteOn(0, 0, notes[pin.Pin], 127)
+			ws.WriteColors([]color.RGBA{{R: 255, G: 0, B: 0, A: 100}})
+		} else {
+			Midi.NoteOff(0, 0, notes[pin.Pin], 127)
+			ws.WriteColors([]color.RGBA{{R: 0, G: 0, B: 0, A: 0}})
 		}
 	}
 }
