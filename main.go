@@ -9,6 +9,12 @@ import (
 	"tinygo.org/x/drivers/ws2812"
 )
 
+type ADCChannel struct {
+	Value uint8
+}
+
+var adc0 = make(chan ADCChannel)
+
 type ActiveChannel struct {
 	Value bool
 	Pin   int
@@ -25,6 +31,7 @@ type Cd74hc4067 struct {
 }
 
 func (mux *Cd74hc4067) Select() {
+	btnState := make(map[int]bool)
 	for {
 		for pin := range pins {
 			mux.S1.Set(pins[pin][0] == 1)
@@ -32,11 +39,19 @@ func (mux *Cd74hc4067) Select() {
 			mux.S3.Set(pins[pin][2] == 1)
 			mux.S4.Set(pins[pin][3] == 1)
 
-			time.Sleep(12 * time.Microsecond)
+			time.Sleep(20 * time.Microsecond)
+
+			pinValue := mux.Signal.Get()
+
+			if btnState[pin] == pinValue {
+				continue
+			}
+
+			btnState[pin] = pinValue
 
 			mux.ActiveChannels <- ActiveChannel{
 				Pin:   pin,
-				Value: mux.Signal.Get(),
+				Value: pinValue,
 			}
 		}
 	}
@@ -82,19 +97,8 @@ var notes = []midi.Note{
 
 var Midi = midi.New()
 
-var notesActive = make(map[int]bool)
-
 func setup() {
-
-	machine.D0.Configure(machine.PinConfig{Mode: machine.PinInputPulldown})
-	machine.D1.Configure(machine.PinConfig{Mode: machine.PinInputPulldown})
-	machine.D2.Configure(machine.PinConfig{Mode: machine.PinInputPulldown})
-
-	machine.D3.Configure(machine.PinConfig{Mode: machine.PinInputPulldown})
-	machine.D4.Configure(machine.PinConfig{Mode: machine.PinInputPulldown})
-	machine.D5.Configure(machine.PinConfig{Mode: machine.PinInputPulldown})
-
-	machine.D6.Configure(machine.PinConfig{Mode: machine.PinInputPulldown})
+	machine.InitADC()
 
 	machine.D10.Configure(machine.PinConfig{Mode: machine.PinOutput})
 	machine.D9.Configure(machine.PinConfig{Mode: machine.PinOutput})
@@ -104,6 +108,32 @@ func setup() {
 	machine.NEOPIXEL.Configure(machine.PinConfig{Mode: machine.PinOutput})
 	machine.NEOPIXEL_POWER.Configure(machine.PinConfig{Mode: machine.PinOutput})
 	machine.NEOPIXEL_POWER.High()
+}
+
+func SendCC() {
+	sensor := machine.ADC{Pin: machine.ADC0}
+	sensor.Configure(machine.ADCConfig{})
+
+	var adc0State uint8
+
+	for {
+		normal := float32(sensor.Get()) / float32(65535)
+
+		value := uint8((normal * 255) / 2)
+
+		if adc0State == value {
+			time.Sleep(100 * time.Millisecond)
+			continue
+		}
+
+		adc0State = value
+
+		adc0 <- ADCChannel{
+			Value: value,
+		}
+
+		time.Sleep(10 * time.Microsecond)
+	}
 }
 
 func main() {
@@ -122,22 +152,22 @@ func main() {
 
 	ws := ws2812.New(machine.NEOPIXEL)
 
+	go SendCC()
 	go mux.Select()
 
-	for pin := range mux.ActiveChannels {
+	for {
+		select {
+		case pin := <-mux.ActiveChannels:
 
-		if notesActive[pin.Pin] == pin.Value {
-			continue
-		}
-
-		notesActive[pin.Pin] = pin.Value
-
-		if notesActive[pin.Pin] {
-			Midi.NoteOn(0, 0, notes[pin.Pin], 127)
-			ws.WriteColors([]color.RGBA{{R: 255, G: 0, B: 0, A: 100}})
-		} else {
-			Midi.NoteOff(0, 0, notes[pin.Pin], 127)
-			ws.WriteColors([]color.RGBA{{R: 0, G: 0, B: 0, A: 0}})
+			if pin.Value {
+				Midi.NoteOn(0, 0, notes[pin.Pin], 127)
+				ws.WriteColors([]color.RGBA{{R: 255, G: 0, B: 0, A: 100}})
+			} else {
+				Midi.NoteOff(0, 0, notes[pin.Pin], 127)
+				ws.WriteColors([]color.RGBA{{R: 0, G: 0, B: 0, A: 0}})
+			}
+		case cc := <-adc0:
+			Midi.SendCC(0, 0, 1, cc.Value)
 		}
 	}
 }
